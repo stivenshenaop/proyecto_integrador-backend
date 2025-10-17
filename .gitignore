@@ -1,0 +1,26 @@
+# Uploads and runtime
+uploads/
+uploads/*
+logs/
+tmp/
+cache/
+
+# Config / secrets
+.env
+config.php
+config.*.php
+
+# Composer / vendor
+vendor/
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Database dumps
+*.sql
+*.sqlite
+
+# Misc
+*.log
