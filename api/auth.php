@@ -116,9 +116,82 @@ try {
 
         $avatar = $input['avatar'] ?? null;
         $favorites = isset($input['favorites']) ? json_encode($input['favorites']) : null;
-        $primer_nombre = $input['primer_nombre'] ?? null;
 
-        // Handle file upload if provided
+        $fields = [];
+        $params = [':id' => $uid];
+
+        // Normalize string helpers
+        $trimOrNull = static function ($value) {
+            if (!isset($value)) {
+                return null;
+            }
+            if (is_string($value)) {
+                $trimmed = trim($value);
+                return $trimmed === '' ? '' : $trimmed;
+            }
+            return $value;
+        };
+
+        // Handle user profile fields
+        $profileFields = [
+            'primer_nombre' => 'primer_nombre',
+            'segundo_nombre' => 'segundo_nombre',
+            'telefono' => 'telefono',
+            'pais' => 'pais',
+            'ciudad' => 'ciudad',
+            'codigo_postal' => 'codigo_postal',
+        ];
+
+        foreach ($profileFields as $inputKey => $column) {
+            if (array_key_exists($inputKey, $input)) {
+                $value = $trimOrNull($input[$inputKey]);
+                $fields[] = $column . ' = :' . $column;
+                $params[':' . $column] = $value;
+            }
+        }
+
+        // Email update with uniqueness validation
+        if (array_key_exists('email', $input)) {
+            $email = trim((string) $input['email']);
+            if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                echo json_encode(['success' => false, 'error' => 'Correo electrónico inválido']);
+                exit;
+            }
+
+            $stmt = $pdo->prepare('SELECT id FROM usuarios WHERE email = :email AND id <> :id LIMIT 1');
+            $stmt->execute([':email' => $email, ':id' => $uid]);
+            if ($stmt->fetch(PDO::FETCH_ASSOC)) {
+                echo json_encode(['success' => false, 'error' => 'Ese correo ya está registrado']);
+                exit;
+            }
+
+            $fields[] = 'email = :email';
+            $params[':email'] = $email;
+        }
+
+        // Optional password update
+        $newPasswordRaw = $input['new_password'] ?? $input['password'] ?? null;
+        if ($newPasswordRaw !== null) {
+            $newPassword = trim((string) $newPasswordRaw);
+            if ($newPassword === '') {
+                echo json_encode(['success' => false, 'error' => 'La nueva contraseña no puede estar vacía']);
+                exit;
+            }
+            if (strlen($newPassword) < 6) {
+                echo json_encode(['success' => false, 'error' => 'La contraseña debe tener al menos 6 caracteres']);
+                exit;
+            }
+            $fields[] = 'password = :password';
+            $params[':password'] = password_hash($newPassword, PASSWORD_DEFAULT);
+        }
+
+        // Handle favorites
+        if ($favorites !== null) {
+            $fields[] = 'favorites = :favorites';
+            $params[':favorites'] = $favorites;
+        }
+
+        // Handle avatar upload or direct URL
         if (isset($_FILES['avatar']) && is_uploaded_file($_FILES['avatar']['tmp_name'])) {
             $uploadsDir = __DIR__ . '/../uploads/avatars';
             if (!is_dir($uploadsDir)) mkdir($uploadsDir, 0755, true);
@@ -129,16 +202,13 @@ try {
             $newName = 'avatar_' . $uid . '_' . time() . '_' . bin2hex(random_bytes(4)) . ($safeExt ? '.' . $safeExt : '');
             $dest = $uploadsDir . '/' . $newName;
             if (move_uploaded_file($_FILES['avatar']['tmp_name'], $dest)) {
-                // Set avatar URL relative to server root
                 $avatar = '/Backend/uploads/avatars/' . $newName;
             }
         }
-
-        $fields = [];
-        $params = [':id' => $uid];
-        if ($avatar !== null) { $fields[] = 'avatar = :avatar'; $params[':avatar'] = $avatar; }
-        if ($favorites !== null) { $fields[] = 'favorites = :favorites'; $params[':favorites'] = $favorites; }
-        if ($primer_nombre !== null) { $fields[] = 'primer_nombre = :primer_nombre'; $params[':primer_nombre'] = $primer_nombre; }
+        if ($avatar !== null) {
+            $fields[] = 'avatar = :avatar';
+            $params[':avatar'] = $avatar;
+        }
 
         if (count($fields) > 0) {
             $sql = 'UPDATE usuarios SET ' . implode(', ', $fields) . ' WHERE id = :id';
@@ -146,12 +216,11 @@ try {
             $stmt->execute($params);
         }
 
-        // Fetch updated user
-        $stmt = $pdo->prepare('SELECT id, primer_nombre, segundo_nombre, email, rol, avatar, favorites FROM usuarios WHERE id = :id LIMIT 1');
+        // Fetch updated user data
+        $stmt = $pdo->prepare('SELECT id, primer_nombre, segundo_nombre, email, telefono, pais, ciudad, codigo_postal, rol, avatar, favorites, fecha_registro, activo FROM usuarios WHERE id = :id LIMIT 1');
         $stmt->execute([':id' => $uid]);
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
         if ($user) {
-            // decode favorites to array if present
             if (!empty($user['favorites'])) {
                 $user['favorites'] = json_decode($user['favorites'], true);
             }
